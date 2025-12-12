@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.vscode/
+.DS_Store
+data/raw/*.csv
+data/processed/*.csv
+output/*.png
+output/*.pdf
+output/*.csv
+*.key
+.env
+*API_KEY*
+*.log
