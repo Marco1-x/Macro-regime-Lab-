@@ -456,7 +456,7 @@ def main(args):
     else:
         # Poids fixes
         w_heur = {
-            "expansion": pd.Series({"SPY": 0.6, "XLK": 0.3, "TLT": 0.1, "GLD": 0.0}),
+            "expansion": pd.Series({"SPY": 0.6, "XLK": 0.4, "TLT": 0.0, "GLD": 0.0}),
             "slowdown": pd.Series({"SPY": 0.4, "XLK": 0.2, "TLT": 0.3, "GLD": 0.1}),
             "contraction": pd.Series({"SPY": 0.0, "XLK": 0.0, "TLT": 0.8, "GLD": 0.2}),
         }
