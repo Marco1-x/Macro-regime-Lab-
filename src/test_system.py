@@ -11,17 +11,17 @@ print("="*80)
 
 print("\n[1/5] Test des imports...")
 try:
-    from src.data_loader import DataLoader
-    from src.features import FeatureEngineer
-    from src.models import HMMRegimeDetector, RandomForestRegimeDetector
-    from src.backtest import BacktestEngine
-    from src.metrics import PerformanceMetrics
+    from data_loader import DataLoader
+    from features import FeatureEngineer
+    from models import HMMRegimeDetector, RandomForestRegimeDetector
+    from backtest import BacktestEngine
+    from metrics import PerformanceMetrics
     print("✅ Tous les imports OK")
 except Exception as e:
     print(f"❌ Erreur import: {e}")
     sys.exit(1)
 
-FRED_API_KEY = "dee74f4224925bf1a3974d668b0e8460"  # <-- Mets ta clé
+FRED_API_KEY ="dee74f4224925bf1a3974d668b0e8460"  # <-- Mets ta clé
 TICKERS = ["SPY", "TLT"]
 START_DATE = "2020-01-01"
 END_DATE = "2023-12-31"
