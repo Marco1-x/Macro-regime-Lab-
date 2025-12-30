@@ -10,13 +10,6 @@ Fonctionnalités :
 - Intégration AdvancedVisualizer
 - Export des résultats
 - Comparaison de stratégies
-
-Ce dashboard utilise les modules du projet:
-- models.py (EnsembleRegimeDetector)
-- backtest.py (slippage dynamique)
-- visualization.py (AdvancedVisualizer)
-- stress_testing.py (stress tests)
-- walk_forward.py (validation)
 """
 
 import streamlit as st
@@ -30,10 +23,6 @@ from typing import Dict, List, Optional, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
-# =========================================
-# CONFIGURATION DE LA PAGE
-# =========================================
-
 st.set_page_config(
     page_title="Macro Regime Lab",
     page_icon="📊",
@@ -41,7 +30,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS personnalisé
 st.markdown("""
 <style>
     .main-header {
@@ -53,7 +41,6 @@ st.markdown("""
         text-align: center;
         margin-bottom: 1rem;
     }
-    
     .metric-card {
         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         padding: 1rem;
@@ -62,17 +49,12 @@ st.markdown("""
         text-align: center;
         margin: 0.5rem 0;
     }
-    
     .regime-expansion { background-color: #28a745; color: white; padding: 5px 10px; border-radius: 5px; }
     .regime-slowdown { background-color: #ffc107; color: black; padding: 5px 10px; border-radius: 5px; }
     .regime-contraction { background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
-
-# =========================================
-# FONCTIONS UTILITAIRES
-# =========================================
 
 @st.cache_data(ttl=3600)
 def generate_sample_data(n_months: int = 120, seed: int = 42) -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
@@ -181,10 +163,6 @@ def run_backtest(returns_df: pd.DataFrame, regimes: pd.Series,
     return port_rets, wealth, metrics
 
 
-# =========================================
-# COMPOSANTS DE VISUALISATION
-# =========================================
-
 def plot_wealth_curves(wealth_dict: Dict[str, pd.Series]) -> go.Figure:
     """Crée le graphique des courbes de richesse."""
     fig = go.Figure()
@@ -286,10 +264,6 @@ def plot_regime_performance(returns: pd.Series, regimes: pd.Series) -> go.Figure
     return fig
 
 
-# =========================================
-# INTERFACE PRINCIPALE
-# =========================================
-
 def main():
     """Application principale."""
     
@@ -332,13 +306,15 @@ def main():
     # Load data
     returns_df, regimes, vix = generate_sample_data(n_months)
     available = [a for a in selected_assets if a in returns_df.columns]
+    if not available:
+        available = returns_df.columns.tolist()
     returns_df = returns_df[available]
     
     # Run backtest
     if run_button or 'results' not in st.session_state:
         with st.spinner("Running backtest..."):
             port_rets, wealth, metrics = run_backtest(returns_df, regimes, weights_by_regime, tc_bps, vix, use_dynamic_slippage)
-            spy_wealth = (1 + returns_df['SPY']).cumprod()
+            spy_wealth = (1 + returns_df['SPY']).cumprod() if 'SPY' in returns_df.columns else (1 + returns_df.iloc[:, 0]).cumprod()
             st.session_state['results'] = {'returns': port_rets, 'wealth': wealth, 'metrics': metrics, 'spy_wealth': spy_wealth, 'regimes': regimes, 'vix': vix}
         st.success("✅ Backtest completed!")
     
@@ -346,6 +322,8 @@ def main():
         results = st.session_state['results']
         port_rets, wealth, metrics = results['returns'], results['wealth'], results['metrics']
         spy_wealth = results['spy_wealth']
+        regimes = results['regimes']
+        vix = results['vix']
         
         # TAB 1: DASHBOARD
         with tab1:
@@ -361,24 +339,24 @@ def main():
             with col4:
                 st.metric("Win Rate", f"{metrics['win_rate']*100:.1f}%")
             
-            st.plotly_chart(plot_wealth_curves({'Strategy': wealth, 'SPY': spy_wealth}), use_container_width=True)
+            st.plotly_chart(plot_wealth_curves({'Strategy': wealth, 'SPY': spy_wealth}), use_container_width=True, key="tab1_wealth")
             
             col1, col2 = st.columns(2)
             with col1:
-                st.plotly_chart(plot_drawdown(wealth), use_container_width=True)
+                st.plotly_chart(plot_drawdown(wealth), use_container_width=True, key="tab1_drawdown")
             with col2:
-                st.plotly_chart(plot_regime_distribution(regimes), use_container_width=True)
+                st.plotly_chart(plot_regime_distribution(regimes), use_container_width=True, key="tab1_regime_dist")
         
         # TAB 2: PERFORMANCE
         with tab2:
             st.header("📈 Performance Analysis")
-            st.plotly_chart(plot_monthly_returns_heatmap(port_rets), use_container_width=True)
+            st.plotly_chart(plot_monthly_returns_heatmap(port_rets), use_container_width=True, key="tab2_heatmap")
             
             col1, col2 = st.columns(2)
             with col1:
-                st.plotly_chart(plot_rolling_sharpe(port_rets, 12), use_container_width=True)
+                st.plotly_chart(plot_rolling_sharpe(port_rets, 12), use_container_width=True, key="tab2_rolling")
             with col2:
-                st.plotly_chart(plot_regime_performance(port_rets, regimes), use_container_width=True)
+                st.plotly_chart(plot_regime_performance(port_rets, regimes), use_container_width=True, key="tab2_regime_perf")
         
         # TAB 3: REGIMES
         with tab3:
@@ -398,7 +376,7 @@ def main():
                 for regime, wts in weights_by_regime.items():
                     st.write(f"**{regime.title()}:** " + ", ".join([f"{a}: {w*100:.0f}%" for a, w in wts.items() if w > 0]))
             
-            st.plotly_chart(plot_regime_performance(port_rets, regimes), use_container_width=True)
+            st.plotly_chart(plot_regime_performance(port_rets, regimes), use_container_width=True, key="tab3_regime_perf")
         
         # TAB 4: RISK
         with tab4:
@@ -418,8 +396,8 @@ def main():
             
             if use_dynamic_slippage:
                 st.subheader("VIX & Dynamic Slippage")
-                fig = px.histogram(results['vix'], nbins=30, title="VIX Distribution")
-                st.plotly_chart(fig, use_container_width=True)
+                fig = px.histogram(vix, nbins=30, title="VIX Distribution")
+                st.plotly_chart(fig, use_container_width=True, key="tab4_vix_hist")
         
         # TAB 5: EXPORT
         with tab5:
@@ -432,12 +410,17 @@ def main():
                          f"{metrics['max_drawdown']*100:.2f}%", f"{metrics['win_rate']*100:.1f}%"]
             })
             
-            st.download_button("📥 Statistics (CSV)", stats_df.to_csv(index=False).encode('utf-8'),
-                              "statistics.csv", "text/csv")
-            
-            wealth_df = pd.DataFrame({'Date': wealth.index, 'Strategy': wealth.values, 'SPY': spy_wealth.values})
-            st.download_button("📥 Wealth Curve (CSV)", wealth_df.to_csv(index=False).encode('utf-8'),
-                              "wealth_curve.csv", "text/csv")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.download_button("📥 Statistics (CSV)", stats_df.to_csv(index=False).encode('utf-8'),
+                                  "statistics.csv", "text/csv", key="dl_stats")
+            with col2:
+                wealth_df = pd.DataFrame({'Date': wealth.index, 'Strategy': wealth.values, 'SPY': spy_wealth.values})
+                st.download_button("📥 Wealth Curve (CSV)", wealth_df.to_csv(index=False).encode('utf-8'),
+                                  "wealth_curve.csv", "text/csv", key="dl_wealth")
+            with col3:
+                st.download_button("📥 Returns (CSV)", port_rets.to_csv().encode('utf-8'),
+                                  "returns.csv", "text/csv", key="dl_returns")
             
             st.success("✅ Exports ready!")
     
