@@ -1,25 +1,12 @@
-# Core data science
+streamlit>=1.28.0
 pandas>=2.0.0
 numpy>=1.24.0
+plotly>=5.18.0
+fredapi>=0.5.0
 scipy>=1.10.0
-
-# Machine Learning
 scikit-learn>=1.3.0
 hmmlearn>=0.3.0
-
-# Data sources
-yfinance>=0.2.0
-fredapi>=0.5.0
-
-# Visualization
 matplotlib>=3.7.0
-plotly>=5.18.0
-
-# Web app
-streamlit>=1.28.0
-
-# PDF export (optional)
-fpdf>=1.7.2
-
-# Utils
-python-dateutil>=2.8.0
+yfinance==0.2.31
+urllib3==1.26.15
+requests>=2.31.0

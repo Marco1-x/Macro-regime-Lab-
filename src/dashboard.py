@@ -1,15 +1,7 @@
 #!/usr/bin/env python3
 """
-dashboard.py
-Dashboard Streamlit Avancé pour Macro Regime Lab
-
-Fonctionnalités :
-- Interface intuitive pour backtesting
-- Visualisations interactives (Plotly)
-- Configuration dynamique des paramètres
-- Intégration AdvancedVisualizer
-- Export des résultats
-- Comparaison de stratégies
+Macro Regime & Factor Rotation Lab - Dashboard
+Version avec téléchargement direct Yahoo Finance
 """
 
 import streamlit as st
@@ -17,416 +9,377 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from fredapi import Fred
+import requests
 import warnings
 warnings.filterwarnings('ignore')
 
+# Configuration page
 st.set_page_config(
     page_title="Macro Regime Lab",
     page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-st.markdown("""
-<style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        background: linear-gradient(90deg, #1f77b4, #2ca02c);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem;
-        border-radius: 10px;
-        color: white;
-        text-align: center;
-        margin: 0.5rem 0;
-    }
-    .regime-expansion { background-color: #28a745; color: white; padding: 5px 10px; border-radius: 5px; }
-    .regime-slowdown { background-color: #ffc107; color: black; padding: 5px 10px; border-radius: 5px; }
-    .regime-contraction { background-color: #dc3545; color: white; padding: 5px 10px; border-radius: 5px; }
-</style>
-""", unsafe_allow_html=True)
+# =========================
+# FONCTIONS DATA
+# =========================
 
+def download_yahoo_data(symbol, start_date, end_date):
+    """Télécharge les données depuis Yahoo Finance API"""
+    start_ts = int(datetime.strptime(start_date, "%Y-%m-%d").timestamp())
+    end_ts = int(datetime.strptime(end_date, "%Y-%m-%d").timestamp())
+    
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+    params = {"period1": start_ts, "period2": end_ts, "interval": "1d"}
+    headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)'}
+    
+    try:
+        response = requests.get(url, params=params, headers=headers)
+        data = response.json()
+        
+        if "chart" not in data or not data["chart"]["result"]:
+            return None
+            
+        result = data["chart"]["result"][0]
+        timestamps = result["timestamp"]
+        quotes = result["indicators"]["quote"][0]
+        
+        df = pd.DataFrame({
+            "Date": pd.to_datetime(timestamps, unit='s'),
+            "Close": quotes["close"]
+        })
+        df.set_index("Date", inplace=True)
+        return df.dropna()
+    except:
+        return None
 
 @st.cache_data(ttl=3600)
-def generate_sample_data(n_months: int = 120, seed: int = 42) -> Tuple[pd.DataFrame, pd.Series, pd.Series]:
-    """Génère des données de démonstration."""
-    np.random.seed(seed)
-    dates = pd.date_range(end=datetime.now(), periods=n_months, freq='ME')
+def download_etf_prices(symbols, start_date, end_date):
+    """Télécharge les prix de plusieurs ETFs"""
+    all_data = {}
+    for symbol in symbols:
+        df = download_yahoo_data(symbol, start_date, end_date)
+        if df is not None:
+            all_data[symbol] = df["Close"]
     
-    spy_ret = np.random.normal(0.008, 0.04, n_months)
-    tlt_ret = np.random.normal(0.003, 0.015, n_months) - 0.3 * spy_ret
-    gld_ret = np.random.normal(0.002, 0.025, n_months)
-    xlk_ret = spy_ret * 1.2 + np.random.normal(0, 0.02, n_months)
-    
-    returns_df = pd.DataFrame({
-        'SPY': spy_ret, 'TLT': tlt_ret, 'GLD': gld_ret, 'XLK': xlk_ret
-    }, index=dates)
-    
-    regimes = pd.Series(
-        np.random.choice(['expansion', 'slowdown', 'contraction'], n_months, p=[0.5, 0.3, 0.2]),
-        index=dates, name='regime'
-    )
-    
-    base_vix = np.random.normal(20, 5, n_months)
-    vix = pd.Series(
-        np.where(regimes == 'contraction', base_vix + 15,
-                np.where(regimes == 'slowdown', base_vix + 5, base_vix)),
-        index=dates, name='VIX'
-    ).clip(10, 80)
-    
-    return returns_df, regimes, vix
+    if not all_data:
+        return pd.DataFrame()
+    return pd.DataFrame(all_data).dropna()
 
+@st.cache_data(ttl=3600)
+def download_macro_data(api_key, start_date, end_date):
+    """Télécharge les données macro depuis FRED"""
+    try:
+        fred = Fred(api_key=api_key)
+        
+        cpi = fred.get_series("CPIAUCSL", observation_start=start_date, observation_end=end_date)
+        unrate = fred.get_series("UNRATE", observation_start=start_date, observation_end=end_date)
+        t10y3m = fred.get_series("T10Y3M", observation_start=start_date, observation_end=end_date)
+        fedfunds = fred.get_series("FEDFUNDS", observation_start=start_date, observation_end=end_date)
+        
+        macro = pd.DataFrame({
+            "CPI": cpi,
+            "UNRATE": unrate,
+            "T10Y3M": t10y3m,
+            "FEDFUNDS": fedfunds
+        })
+        return macro.resample("ME").last()
+    except Exception as e:
+        st.error(f"Erreur FRED: {e}")
+        return pd.DataFrame()
 
-def calculate_metrics(returns: pd.Series) -> Dict:
-    """Calcule les métriques de performance."""
-    total_return = (1 + returns).prod() - 1
-    n_years = len(returns) / 12
-    ann_return = (1 + total_return) ** (1/n_years) - 1 if n_years > 0 else 0
-    volatility = returns.std() * np.sqrt(12)
-    sharpe = ann_return / volatility if volatility > 0 else 0
+def build_features(macro_df):
+    """Construit les features macro"""
+    df = macro_df.copy()
+    df["CPI_YoY"] = df["CPI"].pct_change(12)
+    df["dUNRATE"] = df["UNRATE"].diff()
+    df["slope"] = df["T10Y3M"]
+    return df[["CPI_YoY", "dUNRATE", "slope"]].dropna()
+
+def assign_regimes(features):
+    """Assigne les régimes macro"""
+    df = features.copy()
+    infl_med = df["CPI_YoY"].rolling(60, min_periods=12).median()
+    
+    regime = pd.Series("Expansion", index=df.index)
+    regime[df["slope"] <= 0] = "Contraction"
+    regime[(df["CPI_YoY"] > infl_med) & (df["dUNRATE"] > 0) & (df["slope"] > 0)] = "Slowdown"
+    regime.name = "regime"
+    return regime
+
+def monthly_returns(prices):
+    """Calcule les rendements mensuels"""
+    monthly = prices.resample("ME").last()
+    return monthly.pct_change().dropna()
+
+def backtest_strategy(returns, regimes, weights_dict, tc_bps=5):
+    """Backtest de la stratégie"""
+    df = returns.join(regimes, how="inner").dropna()
+    
+    port_returns = []
+    current_weights = None
+    
+    for date in df.index:
+        regime = df.loc[date, "regime"]
+        target_weights = weights_dict.get(regime, {})
+        
+        # Calculer rendement
+        ret = sum(target_weights.get(col, 0) * df.loc[date, col] 
+                  for col in returns.columns if col in target_weights)
+        
+        # Coûts de transaction
+        if current_weights:
+            turnover = sum(abs(target_weights.get(col, 0) - current_weights.get(col, 0)) 
+                          for col in returns.columns)
+            ret -= tc_bps / 10000 * turnover
+        
+        port_returns.append(ret)
+        current_weights = target_weights
+    
+    port_returns = pd.Series(port_returns, index=df.index)
+    wealth = (1 + port_returns).cumprod()
+    return port_returns, wealth
+
+def compute_metrics(returns):
+    """Calcule les métriques de performance"""
+    annual_ret = returns.mean() * 12
+    annual_vol = returns.std() * np.sqrt(12)
+    sharpe = annual_ret / annual_vol if annual_vol > 0 else 0
     
     wealth = (1 + returns).cumprod()
-    peak = wealth.cummax()
-    max_dd = (wealth / peak - 1).min()
-    win_rate = (returns > 0).mean()
+    drawdown = (wealth / wealth.cummax() - 1)
+    max_dd = drawdown.min()
     
     return {
-        'total_return': total_return,
-        'annualized_return': ann_return,
-        'volatility': volatility,
-        'sharpe_ratio': sharpe,
-        'max_drawdown': max_dd,
-        'win_rate': win_rate
+        "CAGR": annual_ret,
+        "Volatility": annual_vol,
+        "Sharpe": sharpe,
+        "Max Drawdown": max_dd,
+        "Win Rate": (returns > 0).mean()
     }
 
+# =========================
+# INTERFACE
+# =========================
 
-def run_backtest(returns_df: pd.DataFrame, regimes: pd.Series,
-                  weights: Dict[str, Dict[str, float]], tc_bps: float = 5.0,
-                  vix_series: pd.Series = None, use_dynamic_slippage: bool = False
-                  ) -> Tuple[pd.Series, pd.Series, Dict]:
-    """Exécute le backtest."""
-    df = returns_df.join(regimes, how='inner').dropna()
-    
-    if vix_series is not None:
-        vix_aligned = vix_series.reindex(df.index).ffill().bfill()
+st.title("📊 Macro Regime & Factor Rotation Lab")
+
+# Sidebar
+st.sidebar.header("⚙️ Configuration")
+
+# API Key
+fred_key = st.sidebar.text_input("🔑 FRED API Key", type="password", 
+                                  help="Obtenez votre clé sur https://fred.stlouisfed.org/docs/api/api_key.html")
+
+# Période
+st.sidebar.subheader("📅 Période")
+col1, col2 = st.sidebar.columns(2)
+start_date = col1.date_input("Début", value=datetime(2005, 1, 1))
+end_date = col2.date_input("Fin", value=datetime.now())
+
+# Assets
+st.sidebar.subheader("📈 Assets")
+available_assets = ["SPY", "TLT", "GLD", "XLK", "QQQ", "IWM", "EFA", "VNQ"]
+selected_assets = st.sidebar.multiselect("ETFs", available_assets, default=["SPY", "TLT", "GLD", "XLK"])
+
+# Poids par régime
+st.sidebar.subheader("🎯 Poids par Régime")
+
+with st.sidebar.expander("Expansion"):
+    w_exp = {}
+    for asset in selected_assets:
+        default = 0.4 if asset == "SPY" else (0.3 if asset == "XLK" else 0.15)
+        w_exp[asset] = st.slider(f"{asset}", 0.0, 1.0, default, 0.05, key=f"exp_{asset}")
+
+with st.sidebar.expander("Slowdown"):
+    w_slow = {}
+    for asset in selected_assets:
+        default = 0.3 if asset in ["SPY", "TLT"] else 0.2
+        w_slow[asset] = st.slider(f"{asset}", 0.0, 1.0, default, 0.05, key=f"slow_{asset}")
+
+with st.sidebar.expander("Contraction"):
+    w_cont = {}
+    for asset in selected_assets:
+        default = 0.5 if asset == "TLT" else (0.3 if asset == "GLD" else 0.1)
+        w_cont[asset] = st.slider(f"{asset}", 0.0, 1.0, default, 0.05, key=f"cont_{asset}")
+
+weights_by_regime = {
+    "Expansion": w_exp,
+    "Slowdown": w_slow,
+    "Contraction": w_cont
+}
+
+# Transaction costs
+tc_bps = st.sidebar.slider("💰 Transaction Costs (bps)", 0, 50, 5)
+
+# Run button
+run_analysis = st.sidebar.button("🚀 RUN ANALYSIS", type="primary", use_container_width=True)
+
+# =========================
+# MAIN CONTENT
+# =========================
+
+if run_analysis:
+    if not fred_key:
+        st.error("⚠️ Veuillez entrer votre clé FRED API")
+    elif len(selected_assets) < 2:
+        st.error("⚠️ Sélectionnez au moins 2 assets")
     else:
-        vix_aligned = pd.Series(20.0, index=df.index)
-    
-    assets = returns_df.columns.tolist()
-    port_rets = []
-    curr_w = None
-    
-    for t in range(len(df)):
-        regime = df['regime'].iloc[t]
-        rets = df[assets].iloc[t]
-        vix = vix_aligned.iloc[t]
+        with st.spinner("📥 Téléchargement des données..."):
+            # Download data
+            start_str = start_date.strftime("%Y-%m-%d")
+            end_str = end_date.strftime("%Y-%m-%d")
+            
+            prices = download_etf_prices(selected_assets, start_str, end_str)
+            macro = download_macro_data(fred_key, start_str, end_str)
+            
+            if prices.empty:
+                st.error("❌ Impossible de télécharger les prix ETF")
+                st.stop()
+            
+            if macro.empty:
+                st.error("❌ Impossible de télécharger les données macro")
+                st.stop()
+            
+            st.success(f"✅ {len(prices)} jours de données téléchargés")
         
-        if regime in weights:
-            target_w = pd.Series(weights[regime]).reindex(assets).fillna(0.0)
-        else:
-            target_w = pd.Series(0.0, index=assets)
+        with st.spinner("🔄 Analyse en cours..."):
+            # Process data
+            features = build_features(macro)
+            regimes = assign_regimes(features)
+            returns = monthly_returns(prices)
+            
+            # Align data
+            common_idx = returns.index.intersection(regimes.index)
+            returns = returns.loc[common_idx]
+            regimes = regimes.loc[common_idx]
+            
+            # Backtest
+            strat_returns, strat_wealth = backtest_strategy(returns, regimes, weights_by_regime, tc_bps)
+            
+            # Benchmark
+            spy_returns = returns["SPY"] if "SPY" in returns.columns else returns.iloc[:, 0]
+            spy_wealth = (1 + spy_returns).cumprod()
+            
+            # Metrics
+            strat_metrics = compute_metrics(strat_returns)
+            spy_metrics = compute_metrics(spy_returns)
         
-        if curr_w is None:
-            turnover = target_w.abs().sum()
-        else:
-            turnover = (target_w - curr_w).abs().sum()
+        # =========================
+        # DISPLAY RESULTS
+        # =========================
         
-        tc = tc_bps / 10000 * turnover
+        # Tabs
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Performance", "📈 Charts", "🔍 Regimes", "📋 Details"])
         
-        if use_dynamic_slippage and vix_series is not None:
-            if vix < 15:
-                slippage_mult = 1.0
-            elif vix > 30:
-                slippage_mult = 3.0
-            else:
-                slippage_mult = 1.0 + 2.0 * (vix - 15) / 15
-            slippage = 2.0 / 10000 * slippage_mult * turnover
-            tc += slippage
-        
-        net_ret = (target_w * rets).sum() - tc
-        port_rets.append(net_ret)
-        curr_w = target_w
-    
-    port_rets = pd.Series(port_rets, index=df.index, name='strategy')
-    wealth = (1 + port_rets).cumprod()
-    metrics = calculate_metrics(port_rets)
-    
-    return port_rets, wealth, metrics
-
-
-def plot_wealth_curves(wealth_dict: Dict[str, pd.Series]) -> go.Figure:
-    """Crée le graphique des courbes de richesse."""
-    fig = go.Figure()
-    colors = {'Strategy': '#2ca02c', 'SPY': '#1f77b4'}
-    
-    for name, series in wealth_dict.items():
-        fig.add_trace(go.Scatter(
-            x=series.index, y=series.values, name=name, mode='lines',
-            line=dict(width=2.5 if name == 'Strategy' else 1.5, color=colors.get(name, '#7f7f7f'))
-        ))
-    
-    fig.update_layout(
-        title="📈 Wealth Curves (Growth of $1)",
-        xaxis_title="Date", yaxis_title="Wealth",
-        hovermode='x unified', height=500, template='plotly_white',
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
-    return fig
-
-
-def plot_drawdown(wealth: pd.Series) -> go.Figure:
-    """Crée le graphique de drawdown."""
-    drawdown = (wealth / wealth.cummax() - 1) * 100
-    
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=drawdown.index, y=drawdown.values, fill='tozeroy',
-        fillcolor='rgba(220, 53, 69, 0.3)', line=dict(color='#dc3545', width=1), name='Drawdown'
-    ))
-    fig.update_layout(title="📉 Drawdown", xaxis_title="Date", yaxis_title="Drawdown (%)", height=300, template='plotly_white')
-    return fig
-
-
-def plot_regime_distribution(regimes: pd.Series) -> go.Figure:
-    """Crée le graphique de distribution des régimes."""
-    counts = regimes.value_counts()
-    colors = {'expansion': '#28a745', 'slowdown': '#ffc107', 'contraction': '#dc3545'}
-    
-    fig = go.Figure(data=[go.Pie(
-        labels=counts.index, values=counts.values,
-        marker_colors=[colors.get(r, '#7f7f7f') for r in counts.index],
-        hole=0.4, textinfo='percent+label'
-    )])
-    fig.update_layout(title="🎯 Regime Distribution", height=350)
-    return fig
-
-
-def plot_monthly_returns_heatmap(returns: pd.Series) -> go.Figure:
-    """Crée la heatmap des rendements mensuels."""
-    returns_df = returns.to_frame('return')
-    returns_df['year'] = returns_df.index.year
-    returns_df['month'] = returns_df.index.month
-    
-    pivot = returns_df.pivot_table(values='return', index='year', columns='month', aggfunc='sum') * 100
-    months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-    
-    fig = go.Figure(data=go.Heatmap(
-        z=pivot.values, x=months[:pivot.shape[1]], y=pivot.index,
-        colorscale='RdYlGn', zmid=0, text=np.round(pivot.values, 1),
-        texttemplate='%{text}%', textfont={"size": 10}, colorbar=dict(title="Return %")
-    ))
-    fig.update_layout(title="📅 Monthly Returns Heatmap", xaxis_title="Month", yaxis_title="Year", height=400)
-    return fig
-
-
-def plot_rolling_sharpe(returns: pd.Series, window: int = 12) -> go.Figure:
-    """Crée le graphique du Sharpe roulant."""
-    rolling_sharpe = (returns.rolling(window).mean() * 12) / (returns.rolling(window).std() * np.sqrt(12))
-    
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=rolling_sharpe.index, y=rolling_sharpe.values, mode='lines',
-                             line=dict(color='#1f77b4', width=2), name=f'{window}M Rolling Sharpe'))
-    fig.add_hline(y=0, line_dash="dash", line_color="gray")
-    fig.add_hline(y=1, line_dash="dash", line_color="green", annotation_text="Good (1.0)")
-    fig.update_layout(title=f"📊 {window}-Month Rolling Sharpe Ratio", xaxis_title="Date",
-                     yaxis_title="Sharpe Ratio", height=350, template='plotly_white')
-    return fig
-
-
-def plot_regime_performance(returns: pd.Series, regimes: pd.Series) -> go.Figure:
-    """Crée le graphique de performance par régime."""
-    df = pd.DataFrame({'returns': returns, 'regime': regimes})
-    stats = df.groupby('regime')['returns'].agg(['mean', 'std'])
-    stats['sharpe'] = (stats['mean'] * 12) / (stats['std'] * np.sqrt(12))
-    stats['mean'] = stats['mean'] * 12 * 100
-    
-    colors = {'expansion': '#28a745', 'slowdown': '#ffc107', 'contraction': '#dc3545'}
-    
-    fig = make_subplots(rows=1, cols=2, subplot_titles=('Annualized Return by Regime', 'Sharpe by Regime'))
-    
-    fig.add_trace(go.Bar(x=stats.index, y=stats['mean'],
-                        marker_color=[colors.get(r, '#7f7f7f') for r in stats.index],
-                        text=[f"{v:.1f}%" for v in stats['mean']], textposition='auto', name='Return'), row=1, col=1)
-    fig.add_trace(go.Bar(x=stats.index, y=stats['sharpe'],
-                        marker_color=[colors.get(r, '#7f7f7f') for r in stats.index],
-                        text=[f"{v:.2f}" for v in stats['sharpe']], textposition='auto', name='Sharpe'), row=1, col=2)
-    
-    fig.update_layout(title="📊 Performance by Regime", height=350, showlegend=False)
-    return fig
-
-
-def main():
-    """Application principale."""
-    
-    st.markdown('<h1 class="main-header">📊 Macro Regime Lab</h1>', unsafe_allow_html=True)
-    st.markdown("### 🚀 Quantitative Trading Strategy Dashboard")
-    
-    # SIDEBAR
-    st.sidebar.header("⚙️ Configuration")
-    
-    st.sidebar.subheader("📅 Period")
-    n_months = st.sidebar.slider("Number of months", 36, 240, 120, 12)
-    
-    st.sidebar.subheader("📈 Assets")
-    available_assets = ["SPY", "TLT", "GLD", "XLK"]
-    selected_assets = st.sidebar.multiselect("Select ETFs", available_assets, default=available_assets)
-    
-    st.sidebar.subheader("🎯 Regime Weights")
-    
-    with st.sidebar.expander("Expansion Weights"):
-        exp_weights = {asset: st.slider(f"{asset}", 0.0, 1.0, 0.4 if asset == 'SPY' else 0.2, 0.05, key=f"exp_{asset}") for asset in selected_assets}
-    
-    with st.sidebar.expander("Slowdown Weights"):
-        slow_weights = {asset: st.slider(f"{asset}", 0.0, 1.0, 0.3 if asset == 'TLT' else 0.2, 0.05, key=f"slow_{asset}") for asset in selected_assets}
-    
-    with st.sidebar.expander("Contraction Weights"):
-        cont_weights = {asset: st.slider(f"{asset}", 0.0, 1.0, 0.5 if asset == 'TLT' else 0.1, 0.05, key=f"cont_{asset}") for asset in selected_assets}
-    
-    weights_by_regime = {'expansion': exp_weights, 'slowdown': slow_weights, 'contraction': cont_weights}
-    
-    st.sidebar.subheader("💰 Costs")
-    tc_bps = st.sidebar.slider("Commission (bps)", 0.0, 20.0, 5.0, 0.5)
-    use_dynamic_slippage = st.sidebar.checkbox("Dynamic Slippage (VIX)", value=True)
-    
-    st.sidebar.markdown("---")
-    run_button = st.sidebar.button("🚀 RUN BACKTEST", type="primary", use_container_width=True)
-    
-    # TABS
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Dashboard", "📈 Performance", "🎯 Regimes", "📉 Risk", "💾 Export"])
-    
-    # Load data
-    returns_df, regimes, vix = generate_sample_data(n_months)
-    available = [a for a in selected_assets if a in returns_df.columns]
-    if not available:
-        available = returns_df.columns.tolist()
-    returns_df = returns_df[available]
-    
-    # Run backtest
-    if run_button or 'results' not in st.session_state:
-        with st.spinner("Running backtest..."):
-            port_rets, wealth, metrics = run_backtest(returns_df, regimes, weights_by_regime, tc_bps, vix, use_dynamic_slippage)
-            spy_wealth = (1 + returns_df['SPY']).cumprod() if 'SPY' in returns_df.columns else (1 + returns_df.iloc[:, 0]).cumprod()
-            st.session_state['results'] = {'returns': port_rets, 'wealth': wealth, 'metrics': metrics, 'spy_wealth': spy_wealth, 'regimes': regimes, 'vix': vix}
-        st.success("✅ Backtest completed!")
-    
-    if 'results' in st.session_state:
-        results = st.session_state['results']
-        port_rets, wealth, metrics = results['returns'], results['wealth'], results['metrics']
-        spy_wealth = results['spy_wealth']
-        regimes = results['regimes']
-        vix = results['vix']
-        
-        # TAB 1: DASHBOARD
         with tab1:
-            st.header("📊 Performance Dashboard")
+            st.header("Performance Summary")
             
             col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Total Return", f"{metrics['total_return']*100:.1f}%", f"vs SPY: {(metrics['total_return'] - (spy_wealth.iloc[-1]-1))*100:+.1f}%")
-            with col2:
-                st.metric("Sharpe Ratio", f"{metrics['sharpe_ratio']:.2f}")
-            with col3:
-                st.metric("Max Drawdown", f"{metrics['max_drawdown']*100:.1f}%")
-            with col4:
-                st.metric("Win Rate", f"{metrics['win_rate']*100:.1f}%")
+            col1.metric("Strategy CAGR", f"{strat_metrics['CAGR']*100:.1f}%")
+            col2.metric("Strategy Sharpe", f"{strat_metrics['Sharpe']:.2f}")
+            col3.metric("Max Drawdown", f"{strat_metrics['Max Drawdown']*100:.1f}%")
+            col4.metric("Win Rate", f"{strat_metrics['Win Rate']*100:.1f}%")
             
-            st.plotly_chart(plot_wealth_curves({'Strategy': wealth, 'SPY': spy_wealth}), use_container_width=True, key="tab1_wealth")
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.plotly_chart(plot_drawdown(wealth), use_container_width=True, key="tab1_drawdown")
-            with col2:
-                st.plotly_chart(plot_regime_distribution(regimes), use_container_width=True, key="tab1_regime_dist")
+            st.subheader("Strategy vs Benchmark")
+            metrics_df = pd.DataFrame({
+                "Strategy": strat_metrics,
+                "SPY (Benchmark)": spy_metrics
+            }).T
+            metrics_df = metrics_df.style.format({
+                "CAGR": "{:.2%}",
+                "Volatility": "{:.2%}",
+                "Sharpe": "{:.2f}",
+                "Max Drawdown": "{:.2%}",
+                "Win Rate": "{:.2%}"
+            })
+            st.dataframe(metrics_df, use_container_width=True)
         
-        # TAB 2: PERFORMANCE
         with tab2:
-            st.header("📈 Performance Analysis")
-            st.plotly_chart(plot_monthly_returns_heatmap(port_rets), use_container_width=True, key="tab2_heatmap")
+            st.header("Wealth Curves")
             
-            col1, col2 = st.columns(2)
-            with col1:
-                st.plotly_chart(plot_rolling_sharpe(port_rets, 12), use_container_width=True, key="tab2_rolling")
-            with col2:
-                st.plotly_chart(plot_regime_performance(port_rets, regimes), use_container_width=True, key="tab2_regime_perf")
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=strat_wealth.index, y=strat_wealth.values, 
+                                     name="Strategy", line=dict(width=2, color="blue")))
+            fig.add_trace(go.Scatter(x=spy_wealth.index, y=spy_wealth.values,
+                                     name="SPY", line=dict(width=2, color="gray", dash="dash")))
+            fig.update_layout(title="Growth of $1", xaxis_title="Date", yaxis_title="Value",
+                             hovermode="x unified", height=500)
+            st.plotly_chart(fig, use_container_width=True)
+            
+            # Drawdown
+            st.subheader("Drawdown")
+            strat_dd = (strat_wealth / strat_wealth.cummax() - 1) * 100
+            spy_dd = (spy_wealth / spy_wealth.cummax() - 1) * 100
+            
+            fig_dd = go.Figure()
+            fig_dd.add_trace(go.Scatter(x=strat_dd.index, y=strat_dd.values,
+                                        name="Strategy", fill="tozeroy"))
+            fig_dd.add_trace(go.Scatter(x=spy_dd.index, y=spy_dd.values,
+                                        name="SPY", fill="tozeroy"))
+            fig_dd.update_layout(title="Drawdown (%)", xaxis_title="Date", yaxis_title="Drawdown %",
+                                height=400)
+            st.plotly_chart(fig_dd, use_container_width=True)
         
-        # TAB 3: REGIMES
         with tab3:
-            st.header("🎯 Regime Analysis")
+            st.header("Regime Analysis")
             
-            counts = regimes.value_counts()
-            col1, col2 = st.columns(2)
+            col1, col2 = st.columns([1, 2])
             
             with col1:
                 st.subheader("Distribution")
-                for regime in counts.index:
-                    color = {'expansion': '🟢', 'slowdown': '🟡', 'contraction': '🔴'}.get(regime, '⚪')
-                    st.write(f"{color} **{regime.title()}**: {counts[regime]} months ({counts[regime]/len(regimes)*100:.1f}%)")
+                regime_counts = regimes.value_counts()
+                fig_pie = px.pie(values=regime_counts.values, names=regime_counts.index,
+                                color_discrete_map={"Expansion": "green", "Slowdown": "orange", "Contraction": "red"})
+                st.plotly_chart(fig_pie, use_container_width=True)
             
             with col2:
-                st.subheader("Current Weights")
-                for regime, wts in weights_by_regime.items():
-                    st.write(f"**{regime.title()}:** " + ", ".join([f"{a}: {w*100:.0f}%" for a, w in wts.items() if w > 0]))
+                st.subheader("Regime Timeline")
+                regime_df = pd.DataFrame({"Date": regimes.index, "Regime": regimes.values})
+                fig_timeline = px.scatter(regime_df, x="Date", y="Regime", color="Regime",
+                                         color_discrete_map={"Expansion": "green", "Slowdown": "orange", "Contraction": "red"})
+                st.plotly_chart(fig_timeline, use_container_width=True)
             
-            st.plotly_chart(plot_regime_performance(port_rets, regimes), use_container_width=True, key="tab3_regime_perf")
+            st.subheader("Current Weights")
+            current_regime = regimes.iloc[-1] if len(regimes) > 0 else "Unknown"
+            st.info(f"Current Regime: **{current_regime}**")
+            
+            current_weights = weights_by_regime.get(current_regime, {})
+            if current_weights:
+                fig_weights = px.bar(x=list(current_weights.keys()), y=list(current_weights.values()),
+                                    labels={"x": "Asset", "y": "Weight"})
+                st.plotly_chart(fig_weights, use_container_width=True)
         
-        # TAB 4: RISK
         with tab4:
-            st.header("📉 Risk Analysis")
+            st.header("Data Details")
             
-            var_95 = port_rets.quantile(0.05)
-            var_99 = port_rets.quantile(0.01)
-            cvar_95 = port_rets[port_rets <= var_95].mean()
+            st.subheader("Monthly Returns")
+            st.dataframe(returns.tail(12).style.format("{:.2%}"), use_container_width=True)
             
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("VaR 95%", f"{var_95*100:.2f}%")
-            with col2:
-                st.metric("VaR 99%", f"{var_99*100:.2f}%")
-            with col3:
-                st.metric("CVaR 95%", f"{cvar_95*100:.2f}%")
+            st.subheader("Macro Features")
+            st.dataframe(features.tail(12).style.format("{:.4f}"), use_container_width=True)
             
-            if use_dynamic_slippage:
-                st.subheader("VIX & Dynamic Slippage")
-                fig = px.histogram(vix, nbins=30, title="VIX Distribution")
-                st.plotly_chart(fig, use_container_width=True, key="tab4_vix_hist")
-        
-        # TAB 5: EXPORT
-        with tab5:
-            st.header("💾 Export Results")
-            
-            stats_df = pd.DataFrame({
-                'Metric': ['Total Return', 'Ann. Return', 'Volatility', 'Sharpe', 'Max DD', 'Win Rate'],
-                'Value': [f"{metrics['total_return']*100:.2f}%", f"{metrics['annualized_return']*100:.2f}%",
-                         f"{metrics['volatility']*100:.2f}%", f"{metrics['sharpe_ratio']:.2f}",
-                         f"{metrics['max_drawdown']*100:.2f}%", f"{metrics['win_rate']*100:.1f}%"]
-            })
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.download_button("📥 Statistics (CSV)", stats_df.to_csv(index=False).encode('utf-8'),
-                                  "statistics.csv", "text/csv", key="dl_stats")
-            with col2:
-                wealth_df = pd.DataFrame({'Date': wealth.index, 'Strategy': wealth.values, 'SPY': spy_wealth.values})
-                st.download_button("📥 Wealth Curve (CSV)", wealth_df.to_csv(index=False).encode('utf-8'),
-                                  "wealth_curve.csv", "text/csv", key="dl_wealth")
-            with col3:
-                st.download_button("📥 Returns (CSV)", port_rets.to_csv().encode('utf-8'),
-                                  "returns.csv", "text/csv", key="dl_returns")
-            
-            st.success("✅ Exports ready!")
+            # Download button
+            csv = returns.to_csv()
+            st.download_button("📥 Download Returns CSV", csv, "returns.csv", "text/csv")
+
+else:
+    st.info("👈 Configurez vos paramètres et cliquez sur **RUN ANALYSIS** pour commencer")
     
-    st.markdown("---")
-    st.markdown("<div style='text-align:center;color:#666;'>📊 Macro Regime Lab | Built with Streamlit</div>", unsafe_allow_html=True)
-
-
-if __name__ == "__main__":
-    main()
+    st.markdown("""
+    ### 🎯 Comment utiliser ce dashboard
+    
+    1. **Entrez votre clé FRED API** (gratuite sur [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html))
+    2. **Sélectionnez la période** d'analyse
+    3. **Choisissez les ETFs** à inclure
+    4. **Ajustez les poids** pour chaque régime
+    5. **Cliquez sur RUN ANALYSIS**
+    
+    ### 📊 Les 3 Régimes Macro
+    
+    - **🟢 Expansion**: Courbe des taux positive, inflation stable
+    - **🟠 Slowdown**: Inflation haute + chômage en hausse
+    - **🔴 Contraction**: Courbe des taux inversée (récession probable)
+    """)
