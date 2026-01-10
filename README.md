@@ -238,11 +238,11 @@ streamlit run src/dashboard.py
 
 ## 🔮 Améliorations possibles
 
-- [ ] Hidden Markov Models pour détection data-driven des régimes
+- [x] Hidden Markov Models (`src/models.py`) pour détection data-driven des régimes
 - [ ] Indicateurs additionnels (yield curve slope, credit spreads, PMI)
-- [ ] Optimisation dynamique des poids intra-régime
-- [ ] Risk parity pour le dimensionnement des positions
-- [ ] Analyse de sentiment pour affiner les signaux
+- [x] Walk-Forward Analysis (`src/walk_forward.py`) des poids intra-régime
+- [x] Stress Testing & VaR (`src/stress_testing.py`) pour le dimensionnement des positions
+- [x] Ensemble Models avec voting (`src/models.py`) pour affiner les signaux
 
 ---
 
