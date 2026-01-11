@@ -1,0 +1,169 @@
+\documentclass[final,onefignum,onetabnum]{siamart220329}
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+
+\lstset{
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{orange},
+    breaklines=true,
+    frame=single
+}
+
+\title{Macro Regime Detection and Factor Rotation: A Data-Driven Approach to Dynamic Portfolio Allocation}
+
+\author{Marc Aurel Amoussou\thanks{HEC Lausanne, University of Lausanne, Switzerland}}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This paper presents a systematic approach to detecting macroeconomic regimes and implementing dynamic portfolio allocation strategies. Using publicly available data from the Federal Reserve Economic Data (FRED) database, we develop a rule-based regime detection system that identifies three distinct economic states: Expansion, Slowdown, and Recession. The strategy dynamically rotates an ETF portfolio (SPY, TLT, GLD, XLK) based on the detected regime. Backtesting over 2005-2025 demonstrates that the strategy achieves a CAGR of 13.6\% with a Sharpe ratio of 0.95, outperforming both SPY (9.5\% CAGR) and a 60/40 portfolio (6.0\% CAGR). Maximum drawdown is reduced from 52.2\% to 26.7\%.
+\end{abstract}
+
+\begin{keywords}
+Regime Detection, Factor Rotation, Portfolio Optimization, Macroeconomic Indicators
+\end{keywords}
+
+\section{Introduction}
+\label{sec:intro}
+
+Financial markets exhibit distinct behavioral patterns across different macroeconomic environments. During economic expansions, equities typically outperform, while defensive assets like government bonds and gold tend to provide better risk-adjusted returns during recessions.
+
+This paper addresses this challenge by developing a transparent, rule-based regime detection system. The key contributions are:
+\begin{enumerate}
+    \item A heuristic for regime detection using CPI inflation, unemployment rate, and NBER recession indicators
+    \item A dynamic portfolio allocation strategy rotating between risk-on and risk-off assets
+    \item A comprehensive backtesting framework with realistic transaction costs
+    \item An open-source implementation with CLI tools and interactive dashboard
+\end{enumerate}
+
+\section{Research Question and Literature Review}
+\label{sec:literature}
+
+\subsection{Research Questions}
+\begin{enumerate}
+    \item Can macroeconomic regimes be reliably identified using simple rules?
+    \item Does a regime-based rotation strategy outperform static benchmarks?
+    \item What is the impact of transaction costs on performance?
+    \item Can the strategy reduce maximum drawdown during crises?
+\end{enumerate}
+
+\subsection{Related Work}
+Hamilton (1989) introduced Markov-switching models for business cycle dynamics. Hidden Markov Models have become standard for regime detection in finance (Ang and Timmermann, 2012). Ilmanen (2011) provides evidence that expected returns vary across asset classes depending on macroeconomic conditions.
+
+\section{Methodology}
+\label{sec:methodology}
+
+\subsection{Data Sources}
+We use FRED for macroeconomic indicators (CPI, Unemployment, NBER Recession) and Yahoo Finance for ETF prices (SPY, TLT, GLD, XLK). The sample spans January 2005 to November 2025.
+
+\subsection{Regime Detection Algorithm}
+Three regimes are defined:
+\begin{itemize}
+    \item \textbf{Recession}: USREC = 1 (official NBER recession)
+    \item \textbf{Slowdown}: CPI YoY $>$ rolling median AND $\Delta$UNRATE $>$ 0
+    \item \textbf{Expansion}: Otherwise
+\end{itemize}
+
+\subsection{Portfolio Allocation}
+\begin{table}[h]
+\centering
+\caption{Portfolio weights by regime}
+\begin{tabular}{lcccc}
+\toprule
+Regime & SPY & TLT & GLD & XLK \\
+\midrule
+Expansion & 60\% & 0\% & 0\% & 40\% \\
+Slowdown & 40\% & 40\% & 20\% & 0\% \\
+Recession & 0\% & 70\% & 30\% & 0\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Transaction costs are modeled at 5 basis points per unit of turnover.
+
+\section{Implementation}
+\label{sec:implementation}
+
+The project is implemented in Python 3.9+ with modular architecture:
+\begin{itemize}
+    \item \texttt{src/cli.py}: Command-line interface (Typer)
+    \item \texttt{src/dashboard.py}: Interactive Streamlit web app
+    \item \texttt{src/models.py}: HMM, Random Forest, Ensemble detectors
+    \item \texttt{src/backtest.py}: Backtesting engine
+    \item \texttt{src/stress\_testing.py}: VaR and stress tests
+\end{itemize}
+
+The CLI provides three commands: \texttt{detect-regimes}, \texttt{backtest}, and \texttt{report}.
+
+\section{Code Maintenance}
+\label{sec:maintenance}
+
+\subsection{Version Control}
+Git is used with descriptive commits. Repository: \url{https://github.com/Marco1-x/Macro-regime-Lab-}
+
+\subsection{Testing}
+Unit tests use pytest covering regime detection, backtest calculations, and walk-forward analysis.
+
+\subsection{Documentation}
+README.md, API.md, and USER\_GUIDE.md provide comprehensive documentation.
+
+\section{Results}
+\label{sec:results}
+
+\subsection{Regime Distribution (1947-2025)}
+\begin{table}[h]
+\centering
+\begin{tabular}{lcc}
+\toprule
+Regime & Months & Percentage \\
+\midrule
+Expansion & 705 & 76.5\% \\
+Recession & 123 & 13.3\% \\
+Slowdown & 94 & 10.2\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Performance (2005-2025)}
+\begin{table}[h]
+\centering
+\begin{tabular}{lccc}
+\toprule
+Metric & Strategy & SPY & 60/40 \\
+\midrule
+CAGR & \textbf{13.6\%} & 9.5\% & 6.0\% \\
+Volatility & 14.3\% & 14.9\% & 10.1\% \\
+Sharpe Ratio & \textbf{0.95} & 0.64 & 0.60 \\
+Max Drawdown & \textbf{-26.7\%} & -52.2\% & -31.3\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The strategy outperforms SPY by 4.1pp annually with 48\% higher Sharpe ratio and half the drawdown.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+This paper demonstrated that regime-based rotation significantly improves risk-adjusted returns and reduces drawdowns. Limitations include NBER dating lag, parameter sensitivity, and survivorship bias. Future work includes HMM-based detection and additional indicators.
+
+\appendix
+\section{AI Tools Usage}
+Claude (Anthropic) was used for code development, debugging, and documentation. All content was reviewed and tested.
+
+\begin{thebibliography}{9}
+\bibitem{hamilton1989} J.D. Hamilton, A new approach to the economic analysis of nonstationary time series, \emph{Econometrica}, 57 (1989).
+\bibitem{ang2012} A. Ang and A. Timmermann, Regime changes and financial markets, \emph{Annual Review of Financial Economics}, 4 (2012).
+\bibitem{ilmanen2011} A. Ilmanen, \emph{Expected Returns}, John Wiley, 2011.
+\end{thebibliography}
+
+\end{document}

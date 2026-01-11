@@ -1,6 +1,6 @@
 # Macro Regime & Factor Rotation Lab — Report
 
-**Generated:** 2026-01-10 10:15
+**Generated:** 2026-01-11 13:28
 
 ---
 

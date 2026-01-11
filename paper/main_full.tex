@@ -1,0 +1,638 @@
+\documentclass[final,onefignum,onetabnum]{siamart220329}
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{subfig}
+
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue},
+    commentstyle=\color{gray},
+    stringstyle=\color{orange},
+    breaklines=true,
+    frame=single,
+    language=Python
+}
+
+\title{Macro Regime Detection and Factor Rotation: A Data-Driven Approach to Dynamic Portfolio Allocation}
+
+\author{Marc Aurel Amoussou\thanks{HEC Lausanne, University of Lausanne, Switzerland. Course: Introduction to Data Science and Advanced Programming, Fall 2025.}}
+
+\begin{document}
+
+\maketitle
+
+%==============================================================================
+% ABSTRACT
+%==============================================================================
+\begin{abstract}
+This paper presents a systematic approach to detecting macroeconomic regimes and implementing dynamic portfolio allocation strategies. Using publicly available data from the Federal Reserve Economic Data (FRED) database, we develop a rule-based regime detection system that identifies three distinct economic states: Expansion, Slowdown, and Recession. The strategy dynamically rotates an ETF portfolio consisting of SPY (S\&P 500), TLT (Long-term Treasury Bonds), GLD (Gold), and XLK (Technology Sector) based on the detected regime, with monthly rebalancing and realistic transaction costs of 5 basis points.
+
+Backtesting over the period 2005-2025, which includes the 2008 Global Financial Crisis and the 2020 COVID-19 market crash, demonstrates that the regime-based rotation strategy achieves a Compound Annual Growth Rate (CAGR) of 13.6\% with a Sharpe ratio of 0.95. This significantly outperforms both the S\&P 500 buy-and-hold strategy (9.5\% CAGR, 0.64 Sharpe) and a traditional 60/40 stock-bond portfolio (6.0\% CAGR, 0.60 Sharpe). Crucially, the maximum drawdown is reduced from 52.2\% (SPY) to 26.7\%, demonstrating the strategy's effectiveness in capital preservation during market stress.
+
+The complete implementation is available as an open-source Python package featuring a command-line interface (CLI) built with Typer, an interactive Streamlit dashboard, and comprehensive documentation. The project demonstrates software engineering best practices including modular design, unit testing, and version control.
+\end{abstract}
+
+\begin{keywords}
+Regime Detection, Factor Rotation, Portfolio Optimization, Macroeconomic Indicators, Hidden Markov Models, ETF Allocation, Risk Management
+\end{keywords}
+
+%==============================================================================
+% 1. INTRODUCTION
+%==============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{Motivation and Context}
+
+Financial markets do not behave uniformly across time. Instead, they exhibit distinct behavioral patterns that correspond to different macroeconomic environments. During periods of economic expansion, characterized by rising GDP, low unemployment, and moderate inflation, equities typically deliver strong returns as corporate earnings grow. Conversely, during recessions marked by economic contraction, rising unemployment, and declining consumer confidence, defensive assets such as government bonds and gold tend to outperform as investors seek safety.
+
+This cyclical nature of financial markets has been extensively documented in academic literature. The seminal work of Hamilton \cite{hamilton1989} demonstrated that economic variables exhibit fundamentally different dynamics across business cycle phases, leading to the development of regime-switching models. More recently, practitioners and academics have explored how these insights can be translated into actionable investment strategies.
+
+The challenge for investors lies not merely in recognizing that regimes exist, but in identifying regime transitions in real-time and adjusting portfolio allocations accordingly. Traditional static allocation strategies, such as the classic 60/40 portfolio (60\% stocks, 40\% bonds), fail to adapt to changing market conditions. While simple to implement and historically effective, these strategies often suffer significant drawdowns during market stress periods, as evidenced by the 2008 Global Financial Crisis when the 60/40 portfolio lost over 30\% of its value.
+
+\subsection{Research Objectives}
+
+This paper addresses the challenge of dynamic portfolio allocation by developing a systematic, rule-based approach to regime detection and factor rotation. Our primary research objectives are:
+
+\begin{enumerate}
+    \item \textbf{Regime Detection:} Develop a transparent and interpretable method for identifying macroeconomic regimes using publicly available data from the Federal Reserve Economic Data (FRED) database.
+    
+    \item \textbf{Portfolio Construction:} Design allocation rules that map detected regimes to appropriate portfolio weights across multiple asset classes.
+    
+    \item \textbf{Performance Evaluation:} Rigorously backtest the strategy over multiple market cycles with realistic transaction costs and compare against standard benchmarks.
+    
+    \item \textbf{Software Implementation:} Create a production-quality Python implementation following software engineering best practices.
+\end{enumerate}
+
+\subsection{Key Contributions}
+
+The main contributions of this work are:
+
+\begin{enumerate}
+    \item A simple yet effective heuristic for regime detection using three macroeconomic indicators: Consumer Price Index (CPI) inflation, changes in unemployment rate, and the NBER recession indicator.
+    
+    \item Empirical evidence that regime-based factor rotation can significantly improve risk-adjusted returns, achieving a Sharpe ratio of 0.95 compared to 0.64 for buy-and-hold.
+    
+    \item Demonstration that the strategy reduces maximum drawdown by nearly 50\% compared to equity buy-and-hold, from 52.2\% to 26.7\%.
+    
+    \item An open-source Python implementation featuring CLI tools, interactive visualization, and comprehensive documentation.
+\end{enumerate}
+
+\subsection{Paper Organization}
+
+The remainder of this paper is organized as follows. Section~\ref{sec:literature} reviews related work on regime detection and tactical asset allocation. Section~\ref{sec:methodology} presents our methodology for regime detection and portfolio construction, including mathematical formulations. Section~\ref{sec:implementation} describes the software architecture and implementation details. Section~\ref{sec:maintenance} discusses code maintenance, testing, and documentation practices. Section~\ref{sec:results} presents empirical results and analysis. Section~\ref{sec:conclusion} concludes with a discussion of limitations and directions for future research.
+
+%==============================================================================
+% 2. LITERATURE REVIEW
+%==============================================================================
+\section{Research Question and Literature Review}
+\label{sec:literature}
+
+\subsection{Research Questions}
+
+This paper investigates the following research questions:
+
+\begin{enumerate}
+    \item Can macroeconomic regimes be reliably identified using simple, transparent rules based on publicly available indicators?
+    
+    \item Does a regime-based rotation strategy outperform static benchmarks (S\&P 500 buy-and-hold, 60/40 portfolio) on a risk-adjusted basis?
+    
+    \item What is the impact of transaction costs on strategy performance, and does the strategy remain profitable after accounting for realistic trading costs?
+    
+    \item Can the strategy significantly reduce maximum drawdown during major market crises such as the 2008 Global Financial Crisis and the 2020 COVID-19 crash?
+\end{enumerate}
+
+\subsection{Regime-Switching Models}
+
+The concept of economic regimes and regime-switching behavior has a rich history in econometrics. Hamilton \cite{hamilton1989} introduced the Markov-switching autoregressive model to capture the nonlinear dynamics of business cycles. His model assumes that the economy can be in one of several discrete states (regimes), with transitions between states governed by a Markov process. This framework has been widely adopted for modeling GDP growth, inflation, and financial market returns.
+
+Building on Hamilton's work, Ang and Timmermann \cite{ang2012} provide a comprehensive review of regime changes in financial markets. They document that regime-switching models can capture important features of asset returns including time-varying volatility, correlation breakdowns during crises, and fat-tailed return distributions.
+
+Hidden Markov Models (HMMs) have become a standard tool for regime detection in quantitative finance. In an HMM, the regime is treated as a latent (hidden) variable that must be inferred from observable market data. The Baum-Welch algorithm provides an efficient method for estimating model parameters, while the Viterbi algorithm enables optimal state sequence inference.
+
+\subsection{Tactical Asset Allocation}
+
+The literature on tactical asset allocation provides evidence that dynamic strategies can add value over static benchmarks. Ilmanen \cite{ilmanen2011} presents comprehensive evidence that expected returns vary predictably across asset classes depending on macroeconomic conditions, valuation levels, and market sentiment. He argues that investors can improve long-term returns by tilting portfolios toward assets with higher expected returns.
+
+Faber \cite{faber2007} demonstrates that simple trend-following rules based on moving averages can significantly improve risk-adjusted returns by avoiding major drawdowns during bear markets. His 10-month moving average strategy applied to the S\&P 500 reduces maximum drawdown from over 50\% to approximately 20\% while maintaining similar returns.
+
+\subsection{Factor Investing and Business Cycles}
+
+Recent research has explored the relationship between factor premiums and the business cycle. Bender et al. \cite{bender2013} document that different equity factors (value, momentum, quality, low volatility) perform differently across economic regimes. For example, momentum tends to perform well during market uptrends but suffers during regime transitions, while defensive factors like low volatility outperform during economic downturns.
+
+This cyclicality in factor returns suggests that rotating factor exposures based on macroeconomic conditions may enhance portfolio performance. Our work extends this insight by developing a systematic approach to factor rotation using regime detection.
+
+%==============================================================================
+% 3. METHODOLOGY
+%==============================================================================
+\section{Methodology}
+\label{sec:methodology}
+
+\subsection{Data Sources and Description}
+
+Our analysis utilizes two primary data sources:
+
+\subsubsection{Macroeconomic Data from FRED}
+
+We obtain monthly macroeconomic indicators from the Federal Reserve Economic Data (FRED) database:
+
+\begin{itemize}
+    \item \textbf{CPIAUCSL:} Consumer Price Index for All Urban Consumers, used to calculate year-over-year inflation
+    \item \textbf{UNRATE:} Civilian Unemployment Rate, used to track labor market conditions
+    \item \textbf{USREC:} NBER-dated US Recession Indicator, a binary variable equal to 1 during official recession periods
+\end{itemize}
+
+The FRED data spans from 1947 to present, providing over 75 years of economic history covering multiple business cycles.
+
+\subsubsection{Asset Price Data}
+
+Daily ETF prices are obtained from Yahoo Finance for the following instruments:
+
+\begin{itemize}
+    \item \textbf{SPY:} SPDR S\&P 500 ETF Trust, representing broad US equity market exposure
+    \item \textbf{TLT:} iShares 20+ Year Treasury Bond ETF, representing long-duration US government bonds
+    \item \textbf{GLD:} SPDR Gold Shares, providing exposure to gold prices
+    \item \textbf{XLK:} Technology Select Sector SPDR Fund, representing technology sector equities
+\end{itemize}
+
+Daily prices are converted to monthly frequency by taking the last trading day of each month. The backtest period spans January 2005 to November 2025, encompassing 250 months of data.
+
+\subsection{Regime Detection Algorithm}
+
+We define three macroeconomic regimes using a transparent, rule-based heuristic:
+
+\begin{definition}[Recession Regime]
+A month $t$ is classified as \textbf{Recession} if the NBER recession indicator equals one:
+\begin{equation}
+R_t = \text{Recession} \quad \text{if} \quad USREC_t = 1
+\end{equation}
+\end{definition}
+
+\begin{definition}[Slowdown Regime]
+A month $t$ is classified as \textbf{Slowdown} if all of the following conditions hold:
+\begin{enumerate}
+    \item Year-over-year CPI inflation exceeds its 60-month rolling median
+    \item The monthly change in unemployment rate is positive
+    \item The economy is not in an NBER-dated recession
+\end{enumerate}
+Formally:
+\begin{equation}
+R_t = \text{Slowdown} \quad \text{if} \quad \pi_t^{YoY} > \tilde{\pi}_{60,t} \land \Delta U_t > 0 \land USREC_t = 0
+\end{equation}
+where $\pi_t^{YoY}$ is year-over-year inflation, $\tilde{\pi}_{60,t}$ is the 60-month rolling median of inflation, and $\Delta U_t = U_t - U_{t-1}$ is the change in unemployment.
+\end{definition}
+
+\begin{definition}[Expansion Regime]
+All months not classified as Recession or Slowdown are classified as \textbf{Expansion}:
+\begin{equation}
+R_t = \text{Expansion} \quad \text{otherwise}
+\end{equation}
+\end{definition}
+
+The year-over-year inflation rate is calculated as:
+\begin{equation}
+\pi_t^{YoY} = \frac{CPI_t - CPI_{t-12}}{CPI_{t-12}}
+\end{equation}
+
+The complete regime classification function can be expressed as:
+\begin{equation}
+R_t = \begin{cases}
+\text{Recession} & \text{if } USREC_t = 1 \\
+\text{Slowdown} & \text{if } \pi_t^{YoY} > \tilde{\pi}_{60,t} \land \Delta U_t > 0 \land USREC_t = 0 \\
+\text{Expansion} & \text{otherwise}
+\end{cases}
+\end{equation}
+
+\subsection{Portfolio Allocation Rules}
+
+Based on the detected regime, we apply predetermined allocation weights to construct the portfolio:
+
+\begin{table}[h]
+\centering
+\caption{Portfolio allocation weights by regime}
+\label{tab:weights}
+\begin{tabular}{lccccl}
+\toprule
+Regime & SPY & TLT & GLD & XLK & Rationale \\
+\midrule
+Expansion & 60\% & 0\% & 0\% & 40\% & Risk-on: equities + growth \\
+Slowdown & 40\% & 40\% & 20\% & 0\% & Defensive: bonds + inflation hedge \\
+Recession & 0\% & 70\% & 30\% & 0\% & Risk-off: safe haven assets \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The allocation logic reflects economic intuition:
+
+\begin{itemize}
+    \item \textbf{Expansion:} During economic growth periods, we maximize equity exposure with a tilt toward technology (XLK), which typically outperforms during expansions due to higher growth expectations.
+    
+    \item \textbf{Slowdown:} When inflation is elevated and unemployment rising, we reduce equity risk and add bonds (TLT) for duration exposure and gold (GLD) as an inflation hedge.
+    
+    \item \textbf{Recession:} During recessions, we eliminate equity exposure entirely and maximize allocation to safe haven assets (bonds and gold) that historically perform well during risk-off periods.
+\end{itemize}
+
+\subsection{Portfolio Return Calculation}
+
+The monthly portfolio return is calculated as the weighted sum of individual asset returns:
+
+\begin{equation}
+r_{p,t} = \sum_{i=1}^{n} w_{i,t} \cdot r_{i,t}
+\end{equation}
+
+where $w_{i,t}$ is the weight of asset $i$ at time $t$ and $r_{i,t}$ is the return of asset $i$ at time $t$.
+
+\subsection{Transaction Cost Model}
+
+We model transaction costs as a proportional cost on portfolio turnover. The transaction cost at time $t$ is:
+
+\begin{equation}
+TC_t = \lambda \cdot \sum_{i=1}^{n} |w_{i,t} - w_{i,t-1}|
+\end{equation}
+
+where $\lambda = 5$ basis points (0.0005) represents a conservative estimate of trading costs for liquid ETFs including bid-ask spreads and commissions.
+
+The net portfolio return after costs is:
+\begin{equation}
+r_{p,t}^{net} = r_{p,t} - TC_t
+\end{equation}
+
+\subsection{Performance Metrics}
+
+We evaluate strategy performance using standard metrics:
+
+\subsubsection{Compound Annual Growth Rate (CAGR)}
+\begin{equation}
+CAGR = \left(\frac{V_T}{V_0}\right)^{\frac{1}{T}} - 1
+\end{equation}
+where $V_T$ is the terminal portfolio value and $T$ is the number of years.
+
+\subsubsection{Annualized Volatility}
+\begin{equation}
+\sigma_{annual} = \sigma_{monthly} \times \sqrt{12}
+\end{equation}
+
+\subsubsection{Sharpe Ratio}
+\begin{equation}
+SR = \frac{CAGR - r_f}{\sigma_{annual}}
+\end{equation}
+where $r_f$ is the risk-free rate (assumed to be zero for simplicity).
+
+\subsubsection{Maximum Drawdown}
+\begin{equation}
+MDD = \min_{t} \left(\frac{V_t}{\max_{s \leq t} V_s} - 1\right)
+\end{equation}
+
+%==============================================================================
+% 4. IMPLEMENTATION
+%==============================================================================
+\section{Implementation}
+\label{sec:implementation}
+
+\subsection{Software Architecture}
+
+The project follows a modular architecture designed for maintainability and extensibility:
+
+\begin{verbatim}
+macro-factor-lab/
+├── src/
+│   ├── __init__.py
+│   ├── cli.py           # Command-line interface
+│   ├── dashboard.py     # Streamlit web application
+│   ├── models.py        # Regime detection models
+│   ├── backtest.py      # Backtesting engine
+│   ├── data_fetcher.py  # Data download utilities
+│   ├── data_loader.py   # Data loading and processing
+│   ├── features.py      # Feature engineering
+│   ├── metrics.py       # Performance metrics
+│   ├── stress_testing.py# VaR and stress tests
+│   ├── visualization.py # Plotting utilities
+│   └── walk_forward.py  # Walk-forward analysis
+├── data/
+│   ├── fred/            # FRED macroeconomic data
+│   └── etf_prices.csv   # ETF price data
+├── tests/               # Unit tests
+├── docs/                # Documentation
+└── output/              # Generated results
+\end{verbatim}
+
+\subsection{Key Components}
+
+\subsubsection{Regime Detection Models}
+
+The \texttt{models.py} module implements three complementary approaches to regime detection:
+
+\begin{enumerate}
+    \item \textbf{HMMRegimeDetector:} A Gaussian Hidden Markov Model implemented using the \texttt{hmmlearn} library. The model assumes that observed features are generated by a hidden Markov process with Gaussian emissions.
+    
+    \item \textbf{RandomForestRegimeDetector:} A supervised classification approach using scikit-learn's Random Forest classifier, trained on labeled regime data.
+    
+    \item \textbf{EnsembleRegimeDetector:} A combination of multiple models using soft voting to produce more robust predictions.
+\end{enumerate}
+
+\subsubsection{Command-Line Interface}
+
+The CLI is built using Typer and provides three main commands:
+
+\begin{lstlisting}[caption=CLI usage examples]
+# Detect regimes from FRED data
+python -m src.cli detect-regimes
+
+# Run backtest with custom parameters
+python -m src.cli backtest --cost-bps 5 \
+    --start-date 2005-01-01
+
+# Generate markdown report
+python -m src.cli report
+\end{lstlisting}
+
+\subsubsection{Interactive Dashboard}
+
+The Streamlit dashboard provides:
+\begin{itemize}
+    \item Interactive configuration of regime weights
+    \item Real-time performance visualization
+    \item Regime timeline and distribution charts
+    \item CSV export functionality
+\end{itemize}
+
+\subsection{Algorithm Complexity}
+
+The computational complexity of key algorithms:
+
+\begin{itemize}
+    \item \textbf{Regime Detection:} $O(n)$ where $n$ is the number of time periods, as it requires a single pass through the data.
+    
+    \item \textbf{Backtesting:} $O(n \cdot k)$ where $k$ is the number of assets, computing weighted returns for each period.
+    
+    \item \textbf{HMM Training:} $O(n \cdot s^2 \cdot m)$ where $s$ is the number of states and $m$ is the number of EM iterations.
+\end{itemize}
+
+%==============================================================================
+% 5. MAINTENANCE
+%==============================================================================
+\section{Code Maintenance and Version Control}
+\label{sec:maintenance}
+
+\subsection{Version Control with Git}
+
+The project uses Git for version control following best practices:
+
+\begin{itemize}
+    \item \textbf{Branching Strategy:} Feature branches for new development, merged to main after review.
+    
+    \item \textbf{Commit Messages:} Descriptive messages following conventional commits format (e.g., "Feat: add walk-forward analysis", "Fix: correct drawdown calculation").
+    
+    \item \textbf{Repository:} Hosted on GitHub at \url{https://github.com/Marco1-x/Macro-regime-Lab-}
+\end{itemize}
+
+\subsection{Unit Testing}
+
+The test suite uses \texttt{pytest} and covers:
+
+\begin{itemize}
+    \item Regime detection logic validation
+    \item Backtest calculation accuracy
+    \item Walk-forward analysis correctness
+    \item Stress testing functionality
+\end{itemize}
+
+Tests are located in the \texttt{tests/} directory:
+
+\begin{lstlisting}[caption=Running tests]
+pytest tests/ -v --cov=src
+\end{lstlisting}
+
+\subsection{Documentation}
+
+Documentation is provided at multiple levels:
+
+\begin{itemize}
+    \item \textbf{README.md:} Project overview, installation guide, and quick start
+    \item \textbf{API.md:} Detailed API reference for all modules and classes
+    \item \textbf{USER\_GUIDE.md:} Step-by-step usage instructions
+    \item \textbf{Docstrings:} Inline documentation for all functions and classes following Google style
+\end{itemize}
+
+\subsection{Dependency Management}
+
+Dependencies are specified in \texttt{requirements.txt} with version constraints:
+
+\begin{lstlisting}
+pandas>=2.0.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+hmmlearn>=0.3.0
+streamlit>=1.28.0
+plotly>=5.18.0
+typer
+fredapi>=0.5.0
+\end{lstlisting}
+
+%==============================================================================
+% 6. RESULTS
+%==============================================================================
+\section{Results}
+\label{sec:results}
+
+\subsection{Regime Distribution Analysis}
+
+Over the full sample period (1947-2025), the regime detection algorithm identifies the following distribution:
+
+\begin{table}[h]
+\centering
+\caption{Regime distribution (1947-2025)}
+\label{tab:regime_dist}
+\begin{tabular}{lccp{6cm}}
+\toprule
+Regime & Months & Percentage & Economic Interpretation \\
+\midrule
+Expansion & 705 & 76.5\% & Normal economic growth periods \\
+Recession & 123 & 13.3\% & NBER-dated recessions \\
+Slowdown & 94 & 10.2\% & High inflation with rising unemployment \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The distribution aligns with historical experience: the US economy spends approximately three-quarters of the time in expansion, with recessions occurring roughly 13\% of the time. The slowdown regime, characterized by stagflationary conditions, is the least common but includes important periods such as the 1970s oil shocks and the 2022 inflation surge.
+
+\subsection{Strategy Performance}
+
+Table~\ref{tab:performance} presents the performance comparison over the backtest period (2005-2025):
+
+\begin{table}[h]
+\centering
+\caption{Performance comparison (January 2005 - November 2025)}
+\label{tab:performance}
+\begin{tabular}{lccc}
+\toprule
+Metric & Strategy & SPY & 60/40 \\
+\midrule
+CAGR & \textbf{13.6\%} & 9.5\% & 6.0\% \\
+Annualized Volatility & 14.3\% & 14.9\% & 10.1\% \\
+Sharpe Ratio & \textbf{0.95} & 0.64 & 0.60 \\
+Maximum Drawdown & \textbf{-26.7\%} & -52.2\% & -31.3\% \\
+Win Rate (Monthly) & 62.4\% & 60.8\% & 61.2\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Key observations:
+
+\begin{enumerate}
+    \item \textbf{Return Enhancement:} The strategy outperforms SPY by 4.1 percentage points annually (13.6\% vs 9.5\%), representing a 43\% improvement in absolute returns.
+    
+    \item \textbf{Risk-Adjusted Performance:} The Sharpe ratio of 0.95 is 48\% higher than SPY (0.64) and 58\% higher than the 60/40 portfolio (0.60).
+    
+    \item \textbf{Drawdown Reduction:} Maximum drawdown is reduced from 52.2\% (SPY) to 26.7\%, nearly cutting the worst-case loss in half.
+    
+    \item \textbf{Volatility:} The strategy maintains similar volatility to SPY (14.3\% vs 14.9\%) while achieving superior returns, indicating improved efficiency.
+\end{enumerate}
+
+\subsection{Crisis Period Analysis}
+
+The strategy's value is most apparent during major market stress events:
+
+\subsubsection{2008 Global Financial Crisis}
+During the 2008 crisis (September 2008 - March 2009):
+\begin{itemize}
+    \item SPY maximum drawdown: -52.2\%
+    \item Strategy maximum drawdown: -18.3\%
+    \item The strategy's recession regime triggered in late 2008, shifting to TLT and GLD
+\end{itemize}
+
+\subsubsection{2020 COVID-19 Crash}
+During the COVID crash (February - March 2020):
+\begin{itemize}
+    \item SPY maximum drawdown: -33.9\%
+    \item Strategy maximum drawdown: -15.2\%
+    \item Rapid regime transition to defensive positioning limited losses
+\end{itemize}
+
+\subsection{Transaction Cost Impact}
+
+With 5 basis points transaction costs per unit of turnover:
+\begin{itemize}
+    \item Average monthly turnover: 12.3\%
+    \item Average monthly transaction cost: 0.6 basis points
+    \item Annual transaction cost drag: approximately 7 basis points
+    \item Net strategy return remains substantially above benchmarks
+\end{itemize}
+
+%==============================================================================
+% 7. CONCLUSION
+%==============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+\subsection{Summary of Findings}
+
+This paper presented a systematic approach to macro regime detection and dynamic portfolio allocation. Our key findings are:
+
+\begin{enumerate}
+    \item \textbf{Regime Detection:} Simple, transparent rules using publicly available macroeconomic indicators can effectively identify distinct economic regimes.
+    
+    \item \textbf{Performance:} The regime-based rotation strategy significantly outperforms static benchmarks, achieving a CAGR of 13.6\% versus 9.5\% for SPY buy-and-hold.
+    
+    \item \textbf{Risk Management:} Maximum drawdown is reduced by nearly 50\%, from 52.2\% to 26.7\%, demonstrating effective capital preservation during crises.
+    
+    \item \textbf{Robustness:} Performance persists after accounting for realistic transaction costs of 5 basis points.
+\end{enumerate}
+
+\subsection{Limitations}
+
+Several limitations should be acknowledged:
+
+\begin{enumerate}
+    \item \textbf{NBER Dating Lag:} Official recession dates are announced with a delay of 6-12 months. While we use USREC as published, in real-time implementation, the recession signal would not be available immediately.
+    
+    \item \textbf{Parameter Sensitivity:} The 60-month rolling median for inflation comparison is somewhat arbitrary. Different window lengths may produce different results.
+    
+    \item \textbf{Survivorship Bias:} We analyze only currently existing ETFs. Historical analysis may overstate performance if failed instruments were excluded.
+    
+    \item \textbf{Look-Ahead Bias:} Care was taken to use only information available at each decision point, but regime definitions were developed with knowledge of historical performance.
+    
+    \item \textbf{Transaction Costs:} While we model 5 basis points, actual costs may vary with market conditions, trade size, and execution timing.
+\end{enumerate}
+
+\subsection{Future Research Directions}
+
+Several extensions could enhance this work:
+
+\begin{itemize}
+    \item \textbf{Data-Driven Regime Detection:} Implementing Hidden Markov Models or other machine learning approaches to learn regimes directly from data rather than using predefined rules.
+    
+    \item \textbf{Additional Indicators:} Incorporating yield curve slope (10Y-3M spread), credit spreads, PMI data, and other leading indicators.
+    
+    \item \textbf{Dynamic Weight Optimization:} Rather than fixed weights per regime, optimizing allocations using mean-variance or risk parity approaches.
+    
+    \item \textbf{International Application:} Extending the framework to non-US markets and global asset allocation.
+    
+    \item \textbf{Real-Time Implementation:} Developing a production system with live data feeds and automated execution.
+\end{itemize}
+
+%==============================================================================
+% APPENDIX
+%==============================================================================
+\appendix
+
+\section{AI Tools Usage Disclosure}
+\label{sec:ai}
+
+In accordance with course requirements, the following AI tools were used in the development of this project:
+
+\begin{itemize}
+    \item \textbf{Claude (Anthropic):} Used extensively for:
+    \begin{itemize}
+        \item Code development and debugging assistance
+        \item Software architecture design discussions
+        \item Documentation writing and formatting
+        \item LaTeX paper formatting
+        \item Troubleshooting technical issues (e.g., yfinance SSL compatibility)
+    \end{itemize}
+\end{itemize}
+
+All AI-generated code was reviewed, tested, and modified as needed. The author takes full responsibility for the correctness and originality of the final implementation. AI assistance was used as a productivity tool, similar to using Stack Overflow or documentation, rather than as a substitute for understanding the underlying concepts.
+
+%==============================================================================
+% REFERENCES
+%==============================================================================
+\bibliographystyle{siamplain}
+\begin{thebibliography}{9}
+
+\bibitem{hamilton1989}
+J.~D. Hamilton,
+\newblock A new approach to the economic analysis of nonstationary time series and the business cycle,
+\newblock {\em Econometrica}, 57 (1989), pp.~357--384.
+
+\bibitem{ang2012}
+A.~Ang and A.~Timmermann,
+\newblock Regime changes and financial markets,
+\newblock {\em Annual Review of Financial Economics}, 4 (2012), pp.~313--337.
+
+\bibitem{ilmanen2011}
+A.~Ilmanen,
+\newblock {\em Expected Returns: An Investor's Guide to Harvesting Market Rewards},
+\newblock John Wiley \& Sons, 2011.
+
+\bibitem{faber2007}
+M.~T. Faber,
+\newblock A quantitative approach to tactical asset allocation,
+\newblock {\em The Journal of Wealth Management}, 9 (2007), pp.~69--79.
+
+\bibitem{bender2013}
+J.~Bender, R.~Briand, D.~Melas, and R.~A. Subramanian,
+\newblock Foundations of factor investing,
+\newblock {\em MSCI Research Insight}, (2013).
+
+\end{thebibliography}
+
+\end{document}
